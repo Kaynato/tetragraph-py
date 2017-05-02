@@ -105,10 +105,11 @@ def main():
 			delta = np.array(POSITION) - center
 			delta /= np.linalg.norm(delta)
 
+			# Project.
 			loc_up = reference - np.dot(delta, reference)
-			loc_up *= size / (atom_count + 1)
-			loc_up /= np.linalg.norm(loc_up)
 
+			# Normalize.
+			loc_up /= np.linalg.norm(loc_up)
 			loc_right = np.cross(loc_up, delta)
 
 			points = np.array((
@@ -117,6 +118,8 @@ def main():
 				- loc_up - loc_right,
 				- loc_up + loc_right
 			))
+
+			points *= size / (atom_count + 1)
 
 			for point in points:
 				glVertex3fv(offset + center + point)
