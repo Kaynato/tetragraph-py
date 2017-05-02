@@ -22,12 +22,19 @@ def rotation(theta, axis):
                      [2*(bc-ad), aa+cc-bb-dd, 2*(cd+ab)],
                      [2*(bd+ac), 2*(cd-ab), aa+dd-bb-cc]])
 
-def angle(angle):
+def angle2(angle):
 	"""
 	Returns angle vector.
 	"""
 
 	return np.array([math.cos(angle), math.sin(angle), 0])
+
+def angle3(theta, axis):
+	"""
+	Returns angle vector.
+	"""
+
+	return np.dot(rotation(theta, axis), np.array([1, 0, 1]))
 
 def main():
 	v, axis, theta = [3,5,0], [4,4,1], 1.2
