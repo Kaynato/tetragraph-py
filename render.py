@@ -5,6 +5,8 @@ import Transforms
 
 pi = 3.141592
 
+ROTATING = True
+
 GLOBAL_UP = [0, 1, 0]
 POSITION = np.array([0, 0, -4.0])
 
@@ -85,22 +87,13 @@ def main():
 		glEnd()
 
 	def i_Tetrad(atoms, size, color = [1, 1, 1], point_size = 2, offset = [0, 0, 0]):
-		# glBegin(GL_TRIANGLE_FAN);
-
 		locs = TETRAD_LOCS[atoms]
 		atom_count = np.sum(atoms)
 		center = np.sum(locs, axis = 0)
 		edges = TETRAD_EDGE_MAP[atoms]
 		center = center / (atom_count + 0.001)
 
-		# points = np.array([
-		# 	[-1.0, 0.0, 1.0],
-		# 	[ 1.0, 0.0, 1.0],
-		# 	[-1.0, 0.0,-1.0],
-		# 	[ 1.0, 0.0,-1.0],
-		# ])
-
-		# points *= size / (atom_count + 0.001)
+		reference = Transforms.angle(0)
 
 		def draw_tetrad(): # also rotation?
 			global POSITION
@@ -112,8 +105,9 @@ def main():
 			delta = np.array(POSITION) - center
 			delta /= np.linalg.norm(delta)
 
-			loc_up = GLOBAL_UP - np.dot(delta, GLOBAL_UP)
-			loc_up *= size / ((atom_count + 0.001) * np.linalg.norm(loc_up))
+			loc_up = reference - np.dot(delta, reference)
+			loc_up *= size / (atom_count + 1)
+			loc_up /= np.linalg.norm(loc_up)
 
 			loc_right = np.cross(loc_up, delta)
 
@@ -140,8 +134,27 @@ def main():
 
 	tetrads = []
 
-	for atom in ALL_ATOMS:
-		tetrads.append(i_Tetrad(atom, TETRAD_SIZE))
+
+	for i, atom in enumerate(ALL_ATOMS):
+		atom_count = np.sum(atom)
+		if atom_count == 1:
+			color = [1, 1, 1]
+		elif atom_count == 2:
+			# red or cyan?
+			color = [1, 0, 0]
+		elif atom_count == 3:
+			# green, magenta, or blue?
+			color = [0, 1, 0]
+		elif atom_count == 4:
+			# lime or purple?
+			color = [1, 0, 1]
+		elif atom_count == 5:
+			color = [0.5, 0.8, 0.8]
+		elif atom_count == 6:
+			color = [0, 1, 1]
+		else:
+			color = [0, 0, 1]
+		tetrads.append(i_Tetrad(atom, TETRAD_SIZE, color = color))
 
 
 	#######################################################################
@@ -153,7 +166,7 @@ def main():
 	#######################################################################
 
 	def render():
-		global MOUSE_STATE, POSITION
+		global MOUSE_STATE, POSITION, ROTATING
 
 		for event in pygame.event.get():
 			if event.type == pygame.QUIT:
@@ -177,28 +190,30 @@ def main():
 			elif event.type == pygame.MOUSEMOTION and MOUSE_STATE == 'down':
 				xAngle, yAngle = pygame.mouse.get_rel()
 
-				# POSITION[0] += xAngle / 100
-				# POSITION[1] -= yAngle / 100
+				# gimbal! use "current" right and up as rotation axes
 
-				# glTranslatef(0, -yAngle / 100, 0)
-				# glTranslatef(xAngle / 100, 0, 0)
 				glRotatef(-yAngle, 0, 1, 0)
-				yRot = Transforms.rotation(-yAngle * pi / 180, [0, 1, 0])
+				yRot = Transforms.rotation(yAngle * pi / 180, [0, 1, 0])
 				glRotatef(-xAngle, 1, 0, 0)
-				xRot = Transforms.rotation(-xAngle * pi / 180, [1, 0, 0])
+				xRot = Transforms.rotation(xAngle * pi / 180, [1, 0, 0])
 
 				POSITION = np.dot(xRot, np.dot(yRot, POSITION))
 
 				print(POSITION)
 
-				# gluLookAt(POSITION[0], POSITION[1], POSITION[2],
-					# 0, 0, 0,
-					# 0, 1, 0)
+		ROTATING = MOUSE_STATE == 'up'
 
+		if ROTATING:
+			glRotatef(1, 3, 2, 1)
+			rot = Transforms.rotation(-pi / 180, [3, 2, 1])
+			POSITION = np.dot(rot, POSITION)
 
 		glClear(GL_COLOR_BUFFER_BIT|GL_DEPTH_BUFFER_BIT)
+
+		# TODO: Render the appropriate lattices?
 		Cube()
 		Star()
+
 		for draw_tetrad in tetrads:
 			draw_tetrad()
 		pygame.display.flip()
@@ -208,20 +223,9 @@ def main():
 
 	display = [640, 480]
 
-	# POSITION = [-1.0, -4.0, -1.0]
-	# locations = np.tile(CORNERS, (1, 1))
-	# look = POSITION - locations
-	# local_up = [0, 0, 1]
-	# local_right = np.cross(local_up, look)
-	# local_look = np.cross(local_right, local_up)
-
 	screen = pygame.display.set_mode(display, DOUBLEBUF|OPENGL)
 	gluPerspective(45, (display[0]/display[1]), 0.1, 50.0)
 	glTranslatef(POSITION[0], POSITION[1], POSITION[2])
-
-	# gluLookAt(POSITION[0], POSITION[1], POSITION[2],
-		# 0, 0, 0,
-		# 0, 1, 0)
 
 	while True:
 		render()
