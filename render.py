@@ -72,6 +72,11 @@ class Camera:
 			0, 0, 0,
 			self.up[0], self.up[1], self.up[2])
 
+	@property
+	def right(self):
+		right = np.cross(self.up, -self.position)
+		return right / np.linalg.norm(right)
+
 class Tetrad:
 	def __init__(self, atoms, 
 		size = TETRAD_SIZE, color = [1, 1, 1],
@@ -125,6 +130,17 @@ class Tetrad:
 			for vertex in edge:
 				glVertex3fv(self.center + points[vertex])
 		glEnd()
+
+class Lattice:
+
+	def __init__(self, states, diff = 1):
+		"""
+		Take in a list of tetrads, and make a lattice on the ones that differ by 'diff'
+		Our color is the average of their colors.
+		"""
+
+	def draw(self):
+		pass
 
 def main():
 	camera = Camera(
@@ -253,8 +269,8 @@ def main():
 
 				# gimbal! use "current" right and up as rotation axes
 
-				camera.rotate(-yAngle, [0, 1, 0])
-				camera.rotate(-xAngle, [1, 0, 0])
+				camera.rotate(-yAngle, camera.right)
+				camera.rotate(+xAngle, camera.up)
 
 		rotating = MOUSE_STATE == 'up'
 
@@ -268,9 +284,13 @@ def main():
 		Star()
 
 		for realm in tetrads:
+			# draw at all
 			if realm['draw']:
 				for tetrad in realm['states']:
 					tetrad.draw(camera)
+			# draw lattice if at least 2
+			# if realm['draw'] > 1:
+				# realm['lattice'].draw()
 
 		if DRAW_POSITION:
 			glPointSize(5)
