@@ -11,9 +11,6 @@ DRAW_POSITION = False
 DRAW_DELTA = True
 DELTA_COLOR = [0.1, 0.1, 0.1]
 
-GLOBAL_UP = [0, 1, 0]
-POSITION = np.array([1, 1, -2.0])
-
 MOUSE_STATE = 'up'
 
 ALL_ATOMS = np.array(list(itertools.product([0, 1], repeat = 6))) == 1
@@ -59,25 +56,43 @@ from pygame.locals import *
 from OpenGL.GL import *
 from OpenGL.GLU import *
 
+class Camera:
+	def __init__(self, position, up):
+		self.position = position
+		self.up = up
+
+	def rotate(self, theta, axis):
+		glRotatef(theta, axis[0], axis[1], axis[2])
+		rot = Transforms.rotation(-theta * pi / 180, axis)
+		self.position = np.dot(rot, self.position)
+		self.up = np.dot(rot, self.up)
+
+	def orient(self):
+		gluLookAt(self.position[0] * 2, self.position[1] * 2, self.position[2] * 2,
+			0, 0, 0,
+			self.up[0], self.up[1], self.up[2])
+
 class Tetrad:
 	def __init__(self, atoms, 
-		size = TETRAD_SIZE, color = [1, 1, 1]):
+		size = TETRAD_SIZE, color = [1, 1, 1],
+		point_size = 2, offset = [0, 0, 0],
+		angle = 0, angle_offset = [0, 1, 0]):
 
 		self.atoms = atoms
 		self.size = size
 		self.point_size = point_size
+		self.color = color
 
-		edges = TETRAD_EDGE_MAP[atoms]
-		center = np.sum(TETRAD_LOCS[atoms], axis = 0)
-		atom_count = np.sum(atoms)
-		center = center / (atom_count + 0.001)
+		self.edges = TETRAD_EDGE_MAP[atoms]
+		self.center = np.sum(TETRAD_LOCS[atoms], axis = 0)
+		self.atom_count = np.sum(atoms)
+		self.center = self.center / (self.atom_count + 0.001)
+		self.center += offset
 
-	def draw(self):
-		global POSITION, MOUSE_STATE, GLOBAL_UP
-
-		delta = np.array(POSITION) - center
+	def draw(self, camera):
+		delta = np.array(camera.position) - self.center
 		delta /= np.linalg.norm(delta)
-		loc_up = GLOBAL_UP - (np.dot(delta, GLOBAL_UP) * delta)
+		loc_up = camera.up - (np.dot(delta, camera.up) * delta)
 		loc_up /= np.linalg.norm(loc_up)
 		loc_right = np.cross(loc_up, delta)
 		loc_right /= np.linalg.norm(loc_right)
@@ -87,31 +102,36 @@ class Tetrad:
 			+ loc_up + loc_right,
 			- loc_up - loc_right,
 			- loc_up + loc_right
-		)) * size / (atom_count + 1)
+		)) * self.size / (self.atom_count + 1)
 
 		if DRAW_DELTA:
 			glBegin(GL_LINES)
 			glColor3fv(DELTA_COLOR)
-			glVertex3fv(offset + center)
+			glVertex3fv(self.center)
 			glVertex3f(0, 0, 0)
 			glEnd()
 
-		glPointSize(point_size)
+		glPointSize(self.point_size)
 		glBegin(GL_POINTS)
-		glColor3fv(color)
+		glColor3fv(self.color)
 		for point in points:
-			glVertex3fv(offset + center + point)
+			glVertex3fv(self.center + point)
 		glEnd()
 
 		glLineWidth(TETRAD_WIDTH)
 		glBegin(GL_LINES)
 		# TODO - will need to reorient to face camera
-		for edge in edges:
+		for edge in self.edges:
 			for vertex in edge:
-				glVertex3fv(offset + center + points[vertex])
+				glVertex3fv(self.center + points[vertex])
 		glEnd()
 
 def main():
+	camera = Camera(
+		position = [1, 1, -2.0],
+		up = [0, 1, 0]
+		)
+
 	cube_edges = []
 	star_edges = []
 
@@ -128,13 +148,6 @@ def main():
 					star_edges = [[i, j]]
 				else:
 					star_edges = np.append(star_edges[:], [[i, j]], axis=0)
-
-	def rotate(rad, x, y, z):
-		global POSITION, GLOBAL_UP
-		glRotatef(rad, x, y, z)
-		rot = Transforms.rotation(-rad * pi / 180, [x, y, z])
-		POSITION = np.dot(rot, POSITION)
-		GLOBAL_UP = np.dot(rot, GLOBAL_UP)
 
 	def Cube():
 		glLineWidth(LATTICE_WIDTH)
@@ -153,57 +166,6 @@ def main():
 			for vertex in edge:
 				glVertex3fv(CORNERS[vertex])
 		glEnd()
-
-	# TODO probably make this a class sometime
-	def i_Tetrad(atoms, size, color = [1, 1, 1],
-		point_size = 2, offset = [0, 0, 0],
-		angle = 0, angle_offset = [0, 1, 0]):
-
-		edges = TETRAD_EDGE_MAP[atoms]
-		center = np.sum(TETRAD_LOCS[atoms], axis = 0)
-		atom_count = np.sum(atoms)
-		center = center / (atom_count + 0.001)
-
-		def draw_tetrad(): # also rotation?
-			global POSITION, MOUSE_STATE, GLOBAL_UP
-
-			delta = np.array(POSITION) - center
-			delta /= np.linalg.norm(delta)
-			loc_up = GLOBAL_UP - (np.dot(delta, GLOBAL_UP) * delta)
-			loc_up /= np.linalg.norm(loc_up)
-			loc_right = np.cross(loc_up, delta)
-			loc_right /= np.linalg.norm(loc_right)
-
-			points = np.array((
-				+ loc_up - loc_right,
-				+ loc_up + loc_right,
-				- loc_up - loc_right,
-				- loc_up + loc_right
-			)) * size / (atom_count + 1)
-
-			if DRAW_DELTA:
-				glBegin(GL_LINES)
-				glColor3fv(DELTA_COLOR)
-				glVertex3fv(offset + center)
-				glVertex3f(0, 0, 0)
-				glEnd()
-
-			glPointSize(point_size)
-			glBegin(GL_POINTS)
-			glColor3fv(color)
-			for point in points:
-				glVertex3fv(offset + center + point)
-			glEnd()
-
-			glLineWidth(TETRAD_WIDTH)
-			glBegin(GL_LINES)
-			# TODO - will need to reorient to face camera
-			for edge in edges:
-				for vertex in edge:
-					glVertex3fv(offset + center + points[vertex])
-			glEnd()
-
-		return draw_tetrad
 
 	tetrads = [
 		{'draw': 1, 'states': []}, 
@@ -244,74 +206,60 @@ def main():
 			color = [0, 0, 1]
 		center = np.sum(TETRAD_LOCS[atom], axis = 0)
 		if (center == 0).all():
-			tetrads[atom_count]['states'].append(i_Tetrad(atom, TETRAD_SIZE, color = color))
+			tetrads[atom_count]['states'].append(Tetrad(atom, TETRAD_SIZE, color = color))
 			
 		else:
-			tetrads[atom_count]['states'].append(i_Tetrad(atom, TETRAD_SIZE, color = color))
-
+			tetrads[atom_count]['states'].append(Tetrad(atom, TETRAD_SIZE, color = color))
 
 	#######################################################################
 	#######################################################################
 	#                                                                     #
-	#                               EVENTS                                #
+	#                          RENDER / EVENTS                            #
 	#                                                                     #
 	#######################################################################
 	#######################################################################
 
-	def handle_event(event):
+	def render(camera):
 		global MOUSE_STATE
-		if event.type == pygame.QUIT:
-			pygame.quit()
-			quit()
-
-		# TODO: Might want to make a sidebar selector for real and understandable GUI though
-		elif event.type == pygame.KEYDOWN:
-			# only realms 1-9 are really interesting. 0, 10 are boring.
-			if event.key <= 57 and event.key >= 48:
-				realm = event.key - 48
-				toggle_realm(realm)
-			elif event.key == 65:
-				toggle_realm(10)
-		elif event.type == pygame.MOUSEBUTTONDOWN and MOUSE_STATE == 'up':
-			if event.button == 1:
-				pygame.mouse.get_rel()
-				MOUSE_STATE = 'down'
-
-		elif event.type == pygame.MOUSEBUTTONUP:
-			if event.button == 1 and MOUSE_STATE == 'down':
-				pygame.mouse.get_rel()
-				MOUSE_STATE = 'up'
-			elif event.button == 4:
-				glScalef(1.1, 1.1, 1.1)
-			elif event.button == 5:
-				glScalef(1/1.1, 1/1.1, 1/1.1)
-
-		elif event.type == pygame.MOUSEMOTION and MOUSE_STATE == 'down':
-			xAngle, yAngle = pygame.mouse.get_rel()
-
-			# gimbal! use "current" right and up as rotation axes
-
-			rotate(-yAngle, 0, 1, 0)
-			rotate(-xAngle, 1, 0, 0)
-
-	#######################################################################
-	#######################################################################
-	#                                                                     #
-	#                               RENDER                                #
-	#                                                                     #
-	#######################################################################
-	#######################################################################
-
-	def render():
-		global MOUSE_STATE, POSITION, ROTATING
-
 		for event in pygame.event.get():
-			handle_event(event)
+			if event.type == pygame.QUIT:
+				pygame.quit()
+				quit()
 
-		ROTATING = MOUSE_STATE == 'up'
+			# TODO: Might want to make a sidebar selector for real and understandable GUI though
+			elif event.type == pygame.KEYDOWN:
+				# only realms 1-9 are really interesting. 0, 10 are boring.
+				if event.key <= 57 and event.key >= 48:
+					realm = event.key - 48
+					toggle_realm(realm)
+				elif event.key == 65:
+					toggle_realm(10)
+			elif event.type == pygame.MOUSEBUTTONDOWN and MOUSE_STATE == 'up':
+				if event.button == 1:
+					pygame.mouse.get_rel()
+					MOUSE_STATE = 'down'
 
-		if ROTATING:
-			rotate(1, 1, 2, 3)
+			elif event.type == pygame.MOUSEBUTTONUP:
+				if event.button == 1 and MOUSE_STATE == 'down':
+					pygame.mouse.get_rel()
+					MOUSE_STATE = 'up'
+				elif event.button == 4:
+					glScalef(1.1, 1.1, 1.1)
+				elif event.button == 5:
+					glScalef(1/1.1, 1/1.1, 1/1.1)
+
+			elif event.type == pygame.MOUSEMOTION and MOUSE_STATE == 'down':
+				xAngle, yAngle = pygame.mouse.get_rel()
+
+				# gimbal! use "current" right and up as rotation axes
+
+				camera.rotate(-yAngle, [0, 1, 0])
+				camera.rotate(-xAngle, [1, 0, 0])
+
+		rotating = MOUSE_STATE == 'up'
+
+		if rotating:
+			camera.rotate(1, [1, 2, 3])
 
 		glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT)
 
@@ -321,8 +269,8 @@ def main():
 
 		for realm in tetrads:
 			if realm['draw']:
-				for draw_tetrad in realm['states']:
-					draw_tetrad()
+				for tetrad in realm['states']:
+					tetrad.draw(camera)
 
 		if DRAW_POSITION:
 			glPointSize(5)
@@ -340,12 +288,11 @@ def main():
 	screen = pygame.display.set_mode(display, DOUBLEBUF|OPENGL)
 
 	gluPerspective(20.0, (display[0]/display[1]), 0.1, 50.0)
-	gluLookAt(POSITION[0] * 2, POSITION[1] * 2, POSITION[2] * 2,
-		0, 0, 0,
-		GLOBAL_UP[0], GLOBAL_UP[1], GLOBAL_UP[2])
+
+	camera.orient()
 	
 	while True:
-		render()
+		render(camera)
 
 if __name__ == '__main__':
 	main()
