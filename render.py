@@ -6,7 +6,7 @@ import Transforms
 pi = 3.141592
 
 ROTATING = True
-DRAW_POSITION = True
+DRAW_POSITION = False
 
 DRAW_DELTA = True
 DELTA_COLOR = [0.1, 0.1, 0.1]
@@ -59,6 +59,58 @@ from pygame.locals import *
 from OpenGL.GL import *
 from OpenGL.GLU import *
 
+class Tetrad:
+	def __init__(self, atoms, 
+		size = TETRAD_SIZE, color = [1, 1, 1]):
+
+		self.atoms = atoms
+		self.size = size
+		self.point_size = point_size
+
+		edges = TETRAD_EDGE_MAP[atoms]
+		center = np.sum(TETRAD_LOCS[atoms], axis = 0)
+		atom_count = np.sum(atoms)
+		center = center / (atom_count + 0.001)
+
+	def draw(self):
+		global POSITION, MOUSE_STATE, GLOBAL_UP
+
+		delta = np.array(POSITION) - center
+		delta /= np.linalg.norm(delta)
+		loc_up = GLOBAL_UP - (np.dot(delta, GLOBAL_UP) * delta)
+		loc_up /= np.linalg.norm(loc_up)
+		loc_right = np.cross(loc_up, delta)
+		loc_right /= np.linalg.norm(loc_right)
+
+		points = np.array((
+			+ loc_up - loc_right,
+			+ loc_up + loc_right,
+			- loc_up - loc_right,
+			- loc_up + loc_right
+		)) * size / (atom_count + 1)
+
+		if DRAW_DELTA:
+			glBegin(GL_LINES)
+			glColor3fv(DELTA_COLOR)
+			glVertex3fv(offset + center)
+			glVertex3f(0, 0, 0)
+			glEnd()
+
+		glPointSize(point_size)
+		glBegin(GL_POINTS)
+		glColor3fv(color)
+		for point in points:
+			glVertex3fv(offset + center + point)
+		glEnd()
+
+		glLineWidth(TETRAD_WIDTH)
+		glBegin(GL_LINES)
+		# TODO - will need to reorient to face camera
+		for edge in edges:
+			for vertex in edge:
+				glVertex3fv(offset + center + points[vertex])
+		glEnd()
+
 def main():
 	cube_edges = []
 	star_edges = []
@@ -78,10 +130,11 @@ def main():
 					star_edges = np.append(star_edges[:], [[i, j]], axis=0)
 
 	def rotate(rad, x, y, z):
-		global POSITION
+		global POSITION, GLOBAL_UP
 		glRotatef(rad, x, y, z)
 		rot = Transforms.rotation(-rad * pi / 180, [x, y, z])
 		POSITION = np.dot(rot, POSITION)
+		GLOBAL_UP = np.dot(rot, GLOBAL_UP)
 
 	def Cube():
 		glLineWidth(LATTICE_WIDTH)
@@ -110,27 +163,15 @@ def main():
 		center = np.sum(TETRAD_LOCS[atoms], axis = 0)
 		atom_count = np.sum(atoms)
 		center = center / (atom_count + 0.001)
-		# reference = Transforms.angle3(angle, angle_offset)
-		reference = GLOBAL_UP
 
 		def draw_tetrad(): # also rotation?
-			global POSITION, MOUSE_STATE
+			global POSITION, MOUSE_STATE, GLOBAL_UP
 
 			delta = np.array(POSITION) - center
 			delta /= np.linalg.norm(delta)
-
-			# NOTE: Norm makes realllllly weird behavior
-			# probably related to sign
-			# sometimes the symbols flip over unexpectedly
-
-			# AH YES GIMBAL LOCK IS THE PROBLEM OF COURSE
-
-			# Project, Normalize (here is the source of the gimbal locking problem, also)
-			loc_up = reference - (np.dot(delta, reference) * delta)
+			loc_up = GLOBAL_UP - (np.dot(delta, GLOBAL_UP) * delta)
 			loc_up /= np.linalg.norm(loc_up)
 			loc_right = np.cross(loc_up, delta)
-			# if MOUSE_STATE == 'down':
-				# print(np.linalg.norm(loc_up), np.linalg.norm(loc_right))
 			loc_right /= np.linalg.norm(loc_right)
 
 			points = np.array((
@@ -144,7 +185,7 @@ def main():
 				glBegin(GL_LINES)
 				glColor3fv(DELTA_COLOR)
 				glVertex3fv(offset + center)
-				glVertex3fv(POSITION)
+				glVertex3f(0, 0, 0)
 				glEnd()
 
 			glPointSize(point_size)
@@ -270,7 +311,7 @@ def main():
 		ROTATING = MOUSE_STATE == 'up'
 
 		if ROTATING:
-			rotate(1, 1, 0, 0)
+			rotate(1, 1, 2, 3)
 
 		glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT)
 
@@ -301,10 +342,8 @@ def main():
 	gluPerspective(20.0, (display[0]/display[1]), 0.1, 50.0)
 	gluLookAt(POSITION[0] * 2, POSITION[1] * 2, POSITION[2] * 2,
 		0, 0, 0,
-		1, 1, 1)
+		GLOBAL_UP[0], GLOBAL_UP[1], GLOBAL_UP[2])
 	
-	# glTranslatef(POSITION[0], POSITION[1], POSITION[2])
-
 	while True:
 		render()
 
