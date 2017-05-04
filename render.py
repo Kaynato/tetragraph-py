@@ -5,10 +5,12 @@ import Transforms
 
 pi = 3.141592
 
+draw_cubestar = False
+
 ROTATING = True
 DRAW_POSITION = False
 
-DRAW_DELTA = True
+DRAW_DELTA = False
 DELTA_COLOR = [0.1, 0.1, 0.1]
 
 MOUSE_STATE = 'up'
@@ -19,18 +21,20 @@ CUBE_COLOR = [0.2, 0.1, 0.1]
 STAR_COLOR = [0.1, 0.1, 0.2]
 
 LATTICE_WIDTH = 1
+LATTICE_COLORMOD = 0.35
 
 TETRAD_SIZE = 0.1
 TETRAD_WIDTH = 1
 
-# Edges corresponding to the bases
+# Edges corresponding to the bases' values
+# Consider also other orderings
 TETRAD_EDGE_MAP = np.array([
-	[0, 1], # F / vapor - white
-	[0, 3], # U / water - blue
+	[0, 1], # U / vapor - white
+	[0, 3], # F / water - blue
 	[1, 3], # R / stone - yellow
 	[0, 2], # L / flame - red
-	[1, 2], # D / earth - green
-	[2, 3]  # B / metal - black
+	[1, 2], # B / earth - green
+	[2, 3]  # D / metal - black
 ])
 
 # Locations of the bases
@@ -41,6 +45,20 @@ TETRAD_LOCS = np.array([
 	[-1, 0, 0], # L / flame - red
 	[ 0,-1, 0], # D / earth - green
 	[ 0, 0,-1]  # B / metal - black
+])
+
+REALM_COLORS = np.array([
+	[0.0, 0.0, 0.0], # 0 black
+	[1.0, 1.0, 1.0], # 1 white
+	[1.0, 0.0, 0.0], # 2 red
+	[0.0, 1.0, 1.0], # 3 cyan
+	[0.0, 0.0, 1.0], # 4 blue
+	[1.0, 0.0, 1.0], # 5 magenta
+	[0.0, 1.0, 0.0], # 6 green
+	[0.5, 0.8, 1.0], # 7 lime (??)
+	[0.4, 0.0, 0.8], # 8 purple (dark)
+	[0.8, 0.4, 0.0], # 9 orange
+	[1.0, 1.0, 0.0], # F gold
 ])
 
 TETRAD_BASES = np.identity(6)
@@ -58,17 +76,25 @@ from OpenGL.GLU import *
 
 class Camera:
 	def __init__(self, position, up):
-		self.position = position
+		self.position = np.array(position)
 		self.up = up
+		self.aspeed = 0.1
+		self.moment = np.array([0, 1, 0])
 
 	def rotate(self, theta, axis):
+		if not axis.any():
+			return
 		glRotatef(theta, axis[0], axis[1], axis[2])
 		rot = Transforms.rotation(-theta * pi / 180, axis)
 		self.position = np.dot(rot, self.position)
 		self.up = np.dot(rot, self.up)
 
+	def scale(self, sigma):
+		glScalef(sigma, sigma, sigma)
+		# self.position = self.position * sigma
+
 	def orient(self):
-		gluLookAt(self.position[0] * 2, self.position[1] * 2, self.position[2] * 2,
+		gluLookAt(self.position[0], self.position[1], self.position[2],
 			0, 0, 0,
 			self.up[0], self.up[1], self.up[2])
 
@@ -77,13 +103,26 @@ class Camera:
 		right = np.cross(self.up, -self.position)
 		return right / np.linalg.norm(right)
 
+	def set_screen(self, display):
+		self.screen = pygame.display.set_mode(display, DOUBLEBUF|OPENGL|pygame.RESIZABLE)
+		gluPerspective(20.0, (display[0]/display[1]), 0.1, 50.0)
+
+	def idle(self):
+		self.rotate(self.aspeed, self.moment)
+
 class Tetrad:
-	def __init__(self, atoms, 
-		size = TETRAD_SIZE, color = [1, 1, 1],
+	realm3 = np.array([33, 18, 12])
+	realm4 = np.array([11, 21, 38, 56])
+	realm6 = 63 - realm4
+	realm7 = 63 - realm3
+
+	def __init__(self, atoms, value,
+		size = TETRAD_SIZE,
 		point_size = 2, offset = [0, 0, 0],
 		angle = 0, angle_offset = [0, 1, 0]):
 
 		self.atoms = atoms
+		self.value = value
 		self.size = size
 		self.point_size = point_size
 		self.color = color
@@ -93,6 +132,30 @@ class Tetrad:
 		self.atom_count = np.sum(atoms)
 		self.center = self.center / (self.atom_count + 0.001)
 		self.center += offset
+
+		if self.atom_count < 2:
+			self.realm = self.atom_count
+		elif self.atom_count > 4:
+			self.realm = self.atom_count + 4
+		elif self.atom_count == 2:
+			if value in Tetrad.realm3:
+				self.realm = 3
+			else:
+				self.realm = 2
+		elif self.atom_count == 3:
+			if value in Tetrad.realm4:
+				self.realm = 4
+			elif value in Tetrad.realm6:
+				self.realm = 6
+			else:
+				self.realm = 5
+		elif self.atom_count == 4:
+			if value in Tetrad.realm7:
+				self.realm = 7
+			else:
+				self.realm = 8
+
+		self.color = REALM_COLORS[self.realm]
 
 	def draw(self, camera):
 		delta = np.array(camera.position) - self.center
@@ -113,7 +176,8 @@ class Tetrad:
 			glBegin(GL_LINES)
 			glColor3fv(DELTA_COLOR)
 			glVertex3fv(self.center)
-			glVertex3f(0, 0, 0)
+			glVertex3fv(camera.position)
+			# glVertex3f(0, 0, 0)
 			glEnd()
 
 		glPointSize(self.point_size)
@@ -132,21 +196,54 @@ class Tetrad:
 		glEnd()
 
 class Lattice:
+	no_cross = True
 
-	def __init__(self, states, diff = 1):
+	def __init__(self, realm, states):
 		"""
 		Take in a list of tetrads, and make a lattice on the ones that differ by 'diff'
 		Our color is the average of their colors.
 		"""
+		self.states = states
+		edges = []
+
+		# get all edges except for the ones that go through the center (if cross is false)
+		for i in np.r_[0:len(states)]:
+			for j in np.r_[i:len(states)]:
+				# TODO toggle "transformation edges?"
+				# edges of transformation by the 3 primal transformations?
+
+				# avoid center crossing if cross is false
+				crossed = not (states[i].center + states[j].center).any()
+
+				if not (Lattice.no_cross and crossed):
+					if realm != 8 and realm != 2:
+						edges.append([i, j])
+					else:
+						# xor can't be within realm 2
+						intsc = sum(states[i].atoms * states[j].atoms)
+						valsc = states[i].value ^ states[j].value
+						if realm == 2 and intsc == 1 and valsc not in Tetrad.realm3:
+							edges.append([i, j])
+						if realm == 8 and intsc == 3 and valsc not in Tetrad.realm3:
+							edges.append([i, j])
+
+		self.edges = edges
+		self.color = REALM_COLORS[realm] * LATTICE_COLORMOD
 
 	def draw(self):
-		pass
+		glLineWidth(LATTICE_WIDTH)
+		glBegin(GL_LINES)
+		glColor3fv(self.color)
+		for edge in self.edges:
+			for vertex in edge:
+				glVertex3fv(self.states[vertex].center)
+		glEnd()
 
 def main():
 	camera = Camera(
-		position = [1, 1, -2.0],
+		position = [1, 1, 0],
 		up = [0, 1, 0]
-		)
+	)
 
 	cube_edges = []
 	star_edges = []
@@ -202,30 +299,11 @@ def main():
 
 	temp = []
 	for i, atom in enumerate(ALL_ATOMS):
-		atom_count = np.sum(atom)
-		if atom_count == 1:
-			color = [1, 1, 1]
-		elif atom_count == 2:
-			# red or cyan?
-			color = [1, 0, 0]
-		elif atom_count == 3:
-			# green, magenta, or blue?
-			color = [0, 1, 0]
-		elif atom_count == 4:
-			# lime or purple?
-			color = [1, 0, 1]
-		elif atom_count == 5:
-			color = [0.5, 0.8, 0.8]
-		elif atom_count == 6:
-			color = [0, 1, 1]
-		else:
-			color = [0, 0, 1]
-		center = np.sum(TETRAD_LOCS[atom], axis = 0)
-		if (center == 0).all():
-			tetrads[atom_count]['states'].append(Tetrad(atom, TETRAD_SIZE, color = color))
-			
-		else:
-			tetrads[atom_count]['states'].append(Tetrad(atom, TETRAD_SIZE, color = color))
+		tetrad = Tetrad(atom, i, TETRAD_SIZE)
+		tetrads[tetrad.realm]['states'].append(tetrad)
+
+	for i, realm in enumerate(tetrads):
+		realm['lattice'] = Lattice(i, realm['states'])
 
 	#######################################################################
 	#######################################################################
@@ -260,42 +338,50 @@ def main():
 					pygame.mouse.get_rel()
 					MOUSE_STATE = 'up'
 				elif event.button == 4:
-					glScalef(1.1, 1.1, 1.1)
+					camera.scale(1.1)
 				elif event.button == 5:
-					glScalef(1/1.1, 1/1.1, 1/1.1)
+					camera.scale(1/1.1)
 
 			elif event.type == pygame.MOUSEMOTION and MOUSE_STATE == 'down':
 				xAngle, yAngle = pygame.mouse.get_rel()
-
-				# gimbal! use "current" right and up as rotation axes
-
 				camera.rotate(-yAngle, camera.right)
 				camera.rotate(+xAngle, camera.up)
+
+
+				# TODO - doesn't carry over since we are having the mouse be two separate rotations
+				camera.aspeed = (xAngle + yAngle) / 8.0
+				camera.moment = xAngle * camera.up - yAngle * camera.right
+
+			elif event.type == VIDEORESIZE:
+				# The main code that resizes the window:
+				camera.set_screen([event.w, event.h])
+				camera.orient()
 
 		rotating = MOUSE_STATE == 'up'
 
 		if rotating:
-			camera.rotate(1, [1, 2, 3])
+			camera.idle()
 
 		glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT)
 
 		# TODO: Render the appropriate lattices?
-		Cube()
-		Star()
+		if draw_cubestar:
+			Cube()
+			Star()
 
 		for realm in tetrads:
 			# draw at all
+			if realm['draw'] > 1:
+				realm['lattice'].draw()
 			if realm['draw']:
 				for tetrad in realm['states']:
 					tetrad.draw(camera)
 			# draw lattice if at least 2
-			# if realm['draw'] > 1:
-				# realm['lattice'].draw()
 
 		if DRAW_POSITION:
 			glPointSize(5)
 			glBegin(GL_POINTS)
-			glVertex3fv(POSITION)
+			glVertex3fv(camera.position)
 			glEnd()
 
 		pygame.display.flip()
@@ -303,12 +389,7 @@ def main():
 
 	pygame.init()
 
-	display = [640, 480]
-
-	screen = pygame.display.set_mode(display, DOUBLEBUF|OPENGL)
-
-	gluPerspective(20.0, (display[0]/display[1]), 0.1, 50.0)
-
+	camera.set_screen([640, 480])
 	camera.orient()
 	
 	while True:
