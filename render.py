@@ -3,22 +3,12 @@ import itertools
 import numpy as np
 import Transforms
 
-pi = 3.141592
-
-draw_cubestar = False
-
-ROTATING = True
 DRAW_POSITION = False
 
 DRAW_DELTA = False
 DELTA_COLOR = [0.1, 0.1, 0.1]
 
-MOUSE_STATE = 'up'
-
 ALL_ATOMS = np.array(list(itertools.product([0, 1], repeat = 6))) == 1
-
-CUBE_COLOR = [0.2, 0.1, 0.1]
-STAR_COLOR = [0.1, 0.1, 0.2]
 
 LATTICE_WIDTH = 1
 LATTICE_COLORMOD = 0.35
@@ -74,20 +64,34 @@ from pygame.locals import *
 from OpenGL.GL import *
 from OpenGL.GLU import *
 
-class Camera:
+class Camera(object):
+	slider_rate = 0.01
+	spin_rate = 0.1
+
 	def __init__(self, position, up):
 		self.position = np.array(position)
 		self.up = up
 		self.aspeed = 0.1
 		self.moment = np.array([0, 1, 0])
 
+		self._slider = 0
+		self.mscale = 1
+		self.theta = 0
+
 	def rotate(self, theta, axis):
 		if not axis.any():
 			return
 		glRotatef(theta, axis[0], axis[1], axis[2])
-		rot = Transforms.rotation(-theta * pi / 180, axis)
+		rot = Transforms.rotation(-np.deg2rad(theta), axis)
 		self.position = np.dot(rot, self.position)
 		self.up = np.dot(rot, self.up)
+		self.theta += Camera.spin_rate * theta
+		if self.theta > 16 * np.pi:
+			self.theta -= 16 * np.pi
+
+	def spin(self):
+		theta = self.theta
+		return np.sin(np.array([theta + np.pi/3, 2 * theta + 2*np.pi/3, 3 * theta + np.pi, 0, 0, 0]))
 
 	def scale(self, sigma):
 		glScalef(sigma, sigma, sigma)
@@ -103,6 +107,27 @@ class Camera:
 		right = np.cross(self.up, -self.position)
 		return right / np.linalg.norm(right)
 
+	@property
+	def mscale(self):
+		return (np.cos(np.pi * self.slider) + 1) / 2.0
+
+	@mscale.setter
+	def mscale(self, value):
+		self._mscale = value
+
+	@property
+	def slider(self):
+		return self._slider
+
+	@slider.setter
+	def slider(self, value):
+		if value > 1:
+			self._slider = 1
+		elif value < 0:
+			self._slider = 0
+		else:
+			self._slider = value
+
 	def set_screen(self, display):
 		self.screen = pygame.display.set_mode(display, DOUBLEBUF|OPENGL|pygame.RESIZABLE)
 		gluPerspective(20.0, (display[0]/display[1]), 0.1, 50.0)
@@ -110,17 +135,28 @@ class Camera:
 	def idle(self):
 		self.rotate(self.aspeed, self.moment)
 
+class Actives:
+	def __init__(self):
+		self.items = {}
+
+	def has(self, item):
+		self.items[item] = self.items.get(item, False)
+		return self.items[item]
+
+	def on(self, item):
+		self.items[item] = True
+
+	def off(self, item):
+		self.items[item] = False
+
 class Tetrad:
+	null_realms = [3, 7]
 	realm3 = np.array([33, 18, 12])
 	realm4 = np.array([11, 21, 38, 56])
 	realm6 = 63 - realm4
 	realm7 = 63 - realm3
 
-	def __init__(self, atoms, value,
-		size = TETRAD_SIZE,
-		point_size = 2, offset = [0, 0, 0],
-		angle = 0, angle_offset = [0, 1, 0]):
-
+	def __init__(self, atoms, value, size = TETRAD_SIZE, point_size = 2):
 		self.atoms = atoms
 		self.value = value
 		self.size = size
@@ -128,10 +164,11 @@ class Tetrad:
 		self.color = color
 
 		self.edges = TETRAD_EDGE_MAP[atoms]
-		self.center = np.sum(TETRAD_LOCS[atoms], axis = 0)
 		self.atom_count = np.sum(atoms)
-		self.center = self.center / (self.atom_count + 0.001)
-		self.center += offset
+
+		self.location = np.sum(TETRAD_LOCS[atoms], axis = 0)
+
+		self.center = self.location / (self.atom_count + 0.001)
 
 		if self.atom_count < 2:
 			self.realm = self.atom_count
@@ -158,8 +195,24 @@ class Tetrad:
 		self.color = REALM_COLORS[self.realm]
 
 	def draw(self, camera):
-		delta = np.array(camera.position) - self.center
-		delta /= np.linalg.norm(delta)
+		if self.atom_count == 0:
+			self.center = [0, 0, 0]
+		elif self.realm not in Tetrad.null_realms or camera.slider == 0:
+			self.center = self.location / (self.atom_count ** camera.mscale + 0.001)
+		else:
+			basis = self.atoms * camera.spin()
+			basis *= 1 if self.realm == 3 else -1
+			self.center = np.sum(TETRAD_LOCS * basis[:, np.newaxis], axis=0)
+			# normalizing unfortunately screws up the symmetry
+			# if self.realm == 7:
+				# self.center /= np.linalg.norm(self.center)
+			# self.center /= (self.atom_count ** camera.mscale + 0.001)
+			self.center /= (self.atom_count + 0.001)
+			self.center *= 1 - camera.mscale
+
+		delta = 5 * np.array(camera.position) - self.center
+		delta = delta / np.linalg.norm(delta)
+
 		loc_up = camera.up - (np.dot(delta, camera.up) * delta)
 		loc_up /= np.linalg.norm(loc_up)
 		loc_right = np.cross(loc_up, delta)
@@ -203,6 +256,7 @@ class Lattice:
 		Take in a list of tetrads, and make a lattice on the ones that differ by 'diff'
 		Our color is the average of their colors.
 		"""
+		self.realm = realm
 		self.states = states
 		edges = []
 
@@ -215,7 +269,7 @@ class Lattice:
 				# avoid center crossing if cross is false
 				crossed = not (states[i].center + states[j].center).any()
 
-				if not (Lattice.no_cross and crossed):
+				if not (Lattice.no_cross and crossed) or realm in Tetrad.null_realms:
 					if realm != 8 and realm != 2:
 						edges.append([i, j])
 					else:
@@ -231,6 +285,7 @@ class Lattice:
 		self.color = REALM_COLORS[realm] * LATTICE_COLORMOD
 
 	def draw(self):
+		# return if self.realm in Tetrad.null_realms
 		glLineWidth(LATTICE_WIDTH)
 		glBegin(GL_LINES)
 		glColor3fv(self.color)
@@ -245,40 +300,7 @@ def main():
 		up = [0, 1, 0]
 	)
 
-	cube_edges = []
-	star_edges = []
-
-	# definitely can be made parallel, but for now...
-	for i in np.r_[0:len(CORNERS)]:
-		for j in np.r_[i:len(CORNERS)]:
-			if np.sum(CORNERS[i] == CORNERS[j]) == 2:
-				if len(cube_edges) == 0:
-					cube_edges = [[i, j]]
-				else:
-					cube_edges = np.append(cube_edges[:], [[i, j]], axis=0)
-			elif np.sum(CORNERS[i] == CORNERS[j]) == 1:
-				if len(star_edges) == 0:
-					star_edges = [[i, j]]
-				else:
-					star_edges = np.append(star_edges[:], [[i, j]], axis=0)
-
-	def Cube():
-		glLineWidth(LATTICE_WIDTH)
-		glBegin(GL_LINES)
-		glColor3fv(CUBE_COLOR)
-		for edge in cube_edges:
-			for vertex in edge:
-				glVertex3fv(CORNERS[vertex])
-		glEnd()
-
-	def Star():
-		glLineWidth(LATTICE_WIDTH)
-		glBegin(GL_LINES)
-		glColor3fv(STAR_COLOR)
-		for edge in star_edges:
-			for vertex in edge:
-				glVertex3fv(CORNERS[vertex])
-		glEnd()
+	actives = Actives()
 
 	tetrads = [
 		{'draw': 1, 'states': []}, 
@@ -297,7 +319,6 @@ def main():
 	def toggle_realm(realm):
 		tetrads[realm]['draw'] = (tetrads[realm]['draw'] + 1) % 3
 
-	temp = []
 	for i, atom in enumerate(ALL_ATOMS):
 		tetrad = Tetrad(atom, i, TETRAD_SIZE)
 		tetrads[tetrad.realm]['states'].append(tetrad)
@@ -308,13 +329,12 @@ def main():
 	#######################################################################
 	#######################################################################
 	#                                                                     #
-	#                          RENDER / EVENTS                            #
+	#                            LOOP / EVENTS                            #
 	#                                                                     #
 	#######################################################################
 	#######################################################################
 
-	def render(camera):
-		global MOUSE_STATE
+	def loop(camera, actives):
 		for event in pygame.event.get():
 			if event.type == pygame.QUIT:
 				pygame.quit()
@@ -328,27 +348,36 @@ def main():
 					toggle_realm(realm)
 				elif event.key == 65:
 					toggle_realm(10)
-			elif event.type == pygame.MOUSEBUTTONDOWN and MOUSE_STATE == 'up':
+				else:
+					print(pygame.key.name(event.key), 'down')
+					if not actives.has(event.key):
+						actives.on(event.key)
+
+			elif event.type == pygame.KEYUP:
+				if (event.key > 57 and event.key != 65) or event.key < 48:
+					print(pygame.key.name(event.key), 'up')
+					if actives.has(event.key):
+						actives.off(event.key)
+
+			elif event.type == pygame.MOUSEBUTTONDOWN and not actives.has('mouse'):
 				if event.button == 1:
 					pygame.mouse.get_rel()
-					MOUSE_STATE = 'down'
+					actives.on('mouse')
 
 			elif event.type == pygame.MOUSEBUTTONUP:
-				if event.button == 1 and MOUSE_STATE == 'down':
+				if event.button == 1 and actives.has('mouse'):
 					pygame.mouse.get_rel()
-					MOUSE_STATE = 'up'
+					actives.off('mouse')
 				elif event.button == 4:
 					camera.scale(1.1)
 				elif event.button == 5:
 					camera.scale(1/1.1)
 
-			elif event.type == pygame.MOUSEMOTION and MOUSE_STATE == 'down':
+			elif event.type == pygame.MOUSEMOTION and actives.has('mouse'):
 				xAngle, yAngle = pygame.mouse.get_rel()
 				camera.rotate(-yAngle, camera.right)
 				camera.rotate(+xAngle, camera.up)
 
-
-				# TODO - doesn't carry over since we are having the mouse be two separate rotations
 				camera.aspeed = (xAngle + yAngle) / 8.0
 				camera.moment = xAngle * camera.up - yAngle * camera.right
 
@@ -357,17 +386,17 @@ def main():
 				camera.set_screen([event.w, event.h])
 				camera.orient()
 
-		rotating = MOUSE_STATE == 'up'
-
+		rotating = not actives.has('mouse')
 		if rotating:
 			camera.idle()
 
-		glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT)
+		# up and down arrow keys to control slider
+		if actives.has(pygame.K_UP):
+			camera.slider += Camera.slider_rate
+		if actives.has(pygame.K_DOWN):
+			camera.slider -= Camera.slider_rate
 
-		# TODO: Render the appropriate lattices?
-		if draw_cubestar:
-			Cube()
-			Star()
+		glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT)
 
 		for realm in tetrads:
 			# draw at all
@@ -393,7 +422,7 @@ def main():
 	camera.orient()
 	
 	while True:
-		render(camera)
+		loop(camera, actives)
 
 if __name__ == '__main__':
 	main()
